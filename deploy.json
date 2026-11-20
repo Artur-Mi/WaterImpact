@@ -1,0 +1,13 @@
+{
+  "steamIdOwner": "76561198300566255",
+  "targets": {
+    "dev": {
+      "folder": "WaterImpact-dev",
+      "workshopId": null
+    },
+    "final": {
+      "folder": "WaterImpact",
+      "workshopId": null
+    }
+  }
+}
