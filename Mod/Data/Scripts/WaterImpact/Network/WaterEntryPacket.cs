@@ -25,6 +25,19 @@ namespace WaterImpact
         [ProtoMember(5)]
         public double Z;
 
+        // Entry speed (m/s) and direction (unit vector), used by Penetrate.
+        [ProtoMember(6)]
+        public float Speed;
+
+        [ProtoMember(7)]
+        public float DirX;
+
+        [ProtoMember(8)]
+        public float DirY;
+
+        [ProtoMember(9)]
+        public float DirZ;
+
         public static event ReceiveDelegate<WaterEntryPacket> OnReceive;
 
         public override void Received(ref PacketInfo packetInfo, ulong senderSteamId)
