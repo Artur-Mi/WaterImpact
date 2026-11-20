@@ -8,7 +8,7 @@ See [docs/behaviour.md](docs/behaviour.md).
 
 | Target | Local folder in `<SE data>/Mods` (Windows: `%APPDATA%\SpaceEngineers\Mods`) | Workshop ID |
 |---|---|---|
-| dev   | `WaterImpact-dev` | none yet (created by the first dev Publish) |
+| dev   | `WaterImpact-dev` | [3842706265](https://steamcommunity.com/sharedfiles/filedetails/?id=3842706265) |
 | final | `WaterImpact`     | none yet (not published) |
 
 ## Quick start
