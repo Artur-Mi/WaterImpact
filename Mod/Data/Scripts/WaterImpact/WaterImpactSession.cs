@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Jakaria.API;
 using Sandbox.Definitions;
+using Sandbox.Game.Entities;
 using Sandbox.ModAPI;
 using VRage.Game;
 using VRage.Game.Components;
@@ -32,7 +33,13 @@ namespace WaterImpact
         const int NoWaterRecheckTicks = 10;
 
         // Bubble trail of a penetrating round: one bubble every this many ticks (clients only).
-        const int BubbleEveryTicks = 3;
+        const int BubbleEveryTicks = 2;
+
+        // Rounds at least this big (cube root of kinetic energy in MJ: assault cannon 3.3, artillery 4.6) also get
+        // the surface blast sound.
+        const float BlastSoundMinSize = 3f;
+
+        static readonly MySoundPair BlastSound = new MySoundPair("JExplosionSurface");
 
         enum Phase
         {
@@ -76,6 +83,7 @@ namespace WaterImpact
         readonly List<IMyMissile> toDestroy = new List<IMyMissile>();
         readonly List<IMyPlayer> players = new List<IMyPlayer>();
         readonly HashSet<string> loggedSubtypes = new HashSet<string>();
+        readonly List<MyEntity3DSoundEmitter> sounds = new List<MyEntity3DSoundEmitter>();
 
         public override void LoadData()
         {
@@ -103,6 +111,9 @@ namespace WaterImpact
             net?.Dispose();
             net = null;
             tracked.Clear();
+            foreach (MyEntity3DSoundEmitter emitter in sounds)
+                emitter.StopSound(true);
+            sounds.Clear();
             Instance = null;
         }
 
@@ -189,7 +200,7 @@ namespace WaterImpact
                 // Spent: it sinks harmlessly. Clients remove their copy too (same maths, and the packet started it).
                 t.Phase = Phase.Removing;
                 missile.LinearVelocity = Vector3.Zero;
-                Bubble(missile.GetPosition(), 1f);
+                Bubble(missile.GetPosition(), 2f);
                 return;
             }
 
@@ -224,6 +235,9 @@ namespace WaterImpact
         // their entry point (the brain's guidance or physics may have moved them), draw bubble trails.
         public override void UpdateAfterSimulation()
         {
+            if (sounds.Count > 0 && tick % 60 == 0)
+                sounds.RemoveAll(emitter => !emitter.IsPlaying);
+
             if (tracked.Count == 0 || !WaterModAPI.Registered)
                 return;
 
@@ -247,7 +261,11 @@ namespace WaterImpact
                         break;
                     case Phase.Penetrating:
                         if (!isDedicated && tick % BubbleEveryTicks == 0)
-                            Bubble(missile.GetPosition(), 0.5f);
+                        {
+                            // Bigger bubbles while the round is still fast (cavitation), shrinking as it slows.
+                            float ratio = ImpactModel.SpeedAt(t.EntrySpeed, t.Travelled, t.DragLength) / Math.Max(t.EntrySpeed, 1f);
+                            Bubble(missile.GetPosition(), 0.5f + 1.5f * ratio);
+                        }
                         break;
                     case Phase.Air:
                     case Phase.StartedUnderwater:
@@ -329,15 +347,18 @@ namespace WaterImpact
             }
 
             Vector3 dir = speed > 0.01f ? velocity / speed : Vector3.Zero;
-            Apply(t, mode, entry, dir, speed, ImpactModel.SplashRadius(mass, speed));
+            Apply(t, mode, entry, dir, speed);
 
             if (isServer)
                 SendEntry(missile.EntityId, mode, entry, dir, speed);
         }
 
-        void Apply(Tracked t, ImpactMode mode, Vector3D entry, Vector3 dir, float speed, float splashRadius)
+        void Apply(Tracked t, ImpactMode mode, Vector3D entry, Vector3 dir, float speed)
         {
             IMyMissile missile = t.Missile;
+            MyMissileAmmoDefinition ammo = missile.AmmoDefinition as MyMissileAmmoDefinition;
+            float mass = ammo != null ? ammo.MissileMass : 1f;
+            bool kinetic = ammo != null && ammo.MissileHealthPool > 0f;
 
             switch (mode)
             {
@@ -359,8 +380,6 @@ namespace WaterImpact
                         t.Phase = Phase.Removing;
                         break;
                     }
-                    MyMissileAmmoDefinition ammo = missile.AmmoDefinition as MyMissileAmmoDefinition;
-                    float mass = ammo != null ? ammo.MissileMass : 1f;
                     t.Phase = Phase.Penetrating;
                     t.EntryPos = entry;
                     t.Dir = dir;
@@ -388,19 +407,48 @@ namespace WaterImpact
             if (!t.Splashed)
             {
                 t.Splashed = true;
-                Splash(entry, splashRadius);
+                // Shells (kinetic rounds) get a water column and a blast sound; explosive rounds already get the Water
+                // Mod's own water blast from their explosion, duds only a splash.
+                EntryEffects(entry, dir, mass, speed, kinetic && mode != ImpactMode.Dud);
             }
         }
 
-        void Splash(Vector3D position, float radius)
+        // Client effects at the entry point, sized by the round's kinetic energy.
+        void EntryEffects(Vector3D position, Vector3 dir, float mass, float speed, bool column)
         {
             if (isDedicated)
                 return;
+
+            float size = ImpactModel.EffectSize(mass, speed);
             try
             {
                 Vector3D up = WaterModAPI.GetUpDirection(position);
-                WaterModAPI.CreateSplash(position, radius, true);
-                WaterModAPI.CreatePhysicsSplash(position, up * radius * 2d, Math.Max(radius / 4f, 1f), 3);
+
+                // Flat splash ring on the surface (plays the Water Mod's splash sound).
+                WaterModAPI.CreateSplash(position, ImpactModel.SplashRadius(mass, speed), true);
+
+                // Spray: droplets thrown up and a little along the shot.
+                Vector3D spray = up * (15d + size * 10d) + (Vector3D)dir * (size * 3d);
+                WaterModAPI.CreatePhysicsSplash(position, spray, MathHelper.Clamp(size, 2f, 8f), ImpactModel.SprayCount(size));
+
+                if (column)
+                {
+                    // The Water Mod's "WaterBlast" column, oriented the way the Water Mod does it (up axis = gravity).
+                    Vector3D down = -up;
+                    MatrixD matrix = MatrixD.CreateWorld(position, Vector3D.CalculatePerpendicularVector(down), down);
+                    Vector3D at = position;
+                    MyParticleEffect effect;
+                    if (MyParticlesManager.TryCreateParticleEffect("WaterBlast", ref matrix, ref at, 0, out effect))
+                        effect.UserScale = ImpactModel.ColumnScale(size);
+
+                    if (size >= BlastSoundMinSize)
+                    {
+                        MyEntity3DSoundEmitter emitter = new MyEntity3DSoundEmitter(null);
+                        emitter.SetPosition(position);
+                        emitter.PlaySound(BlastSound);
+                        sounds.Add(emitter);
+                    }
+                }
             }
             catch (Exception e)
             {
@@ -496,9 +544,7 @@ namespace WaterImpact
                 return;
             }
 
-            MyMissileAmmoDefinition ammo = missile.AmmoDefinition as MyMissileAmmoDefinition;
-            float mass = ammo != null ? ammo.MissileMass : 1f;
-            Apply(t, mode, entry, dir, packet.Speed, ImpactModel.SplashRadius(mass, packet.Speed));
+            Apply(t, mode, entry, dir, packet.Speed);
         }
     }
 }

@@ -20,8 +20,7 @@ Every missile-type round is tracked. When one goes from above the surface to bel
   surface; if one falls back into the sea, it detonates.
 - The entry point is interpolated between the last two checks from the Water Mod's signed depth, since a large
   railgun slug moves 33 m per tick.
-- Splash radius grows with the cube root of the kinetic energy: about 2 m for a rocket, 9 m for artillery, 25 m (cap)
-  for a large railgun. The Water Mod already restyles the explosion itself as a water blast.
+- Effects at the entry point are described under [Effects](#effects).
 - The first time each ammo subtype hits water, the log gets `[WaterImpact] <subtype> hit water at <speed> m/s: <mode>`.
   Search the newest `SpaceEngineers_*.log` for `[WaterImpact]` when testing.
 - Values are constants in `ImpactSettings` for now (break-up speed 1 100 m/s, `DragK` 4, stop at 5 %, minimum travel
@@ -39,8 +38,26 @@ Every missile-type round is tracked. When one goes from above the surface to bel
   removed with a bubble. A round that would stop within 3 m detonates at the surface instead (only very light ones).
 - The detection runs after the move, so the round may be metres past the surface already: it is put back on the entry
   point to start its underwater run.
-- Clients draw a bubble trail (one every 3 ticks).
 - The log line for a penetrating subtype also gives `L` and the stop distance.
+
+## Effects
+
+Client side only (nothing on a dedicated server), all sized by `size` = cube root of the kinetic energy in MJ
+(rocket ~1, assault cannon 3.3, artillery 4.6, small railgun 6.3, large railgun 15.9). Made bigger 2026-11-19 after the
+first test found the shell hits bland.
+
+| Effect | Who gets it | Size |
+|---|---|---|
+| Surface splash ring (Water Mod `CreateSplash`, with its splash sound) | every round | `3 · size` m, 3 to 40 m: assault 10, artillery 14, large railgun 40 |
+| Spray droplets (Water Mod `CreatePhysicsSplash`), thrown up and a little along the shot | every round | `3 · size` droplets (4 to 24) |
+| Water column: the Water Mod's `WaterBlast` particle | shells only (kinetic rounds that penetrate or shatter) | scale `size / 4`, 0.3 to 3 (1 = the Water Mod's 23 m explosion): assault 0.8, artillery 1.2, large railgun 3 |
+| Surface blast sound (Water Mod `JExplosionSurface`) | shells with `size` ≥ 3 | |
+| Bubble trail under water | penetrating shells, every 2 ticks | radius 2 m at entry, shrinking to 0.5 m as it slows |
+| Bubble burst where a shell stops | penetrating shells | 2 m |
+
+Explosive rounds (rockets, missiles) get no column from this mod: their own explosion already becomes the Water Mod's
+water blast. Tune the numbers in `ImpactModel.cs` (`EffectSize`, `SplashRadius`, `ColumnScale`, `SprayCount`) and the
+limits in `ImpactSettings`.
 
 ## How detonation works
 

@@ -33,8 +33,13 @@ namespace WaterImpact
         public const float MinTravel = 3f;
 
         // Splash radius limits, metres.
-        public const float MinSplashRadius = 2f;
-        public const float MaxSplashRadius = 25f;
+        public const float MinSplashRadius = 3f;
+        public const float MaxSplashRadius = 40f;
+
+        // Water column (the Water Mod's WaterBlast particle) scale limits. 1 is the size the Water Mod uses for a
+        // 23 m explosion.
+        public const float MinColumnScale = 0.3f;
+        public const float MaxColumnScale = 3f;
 
         // Per-subtype mode overrides (beat the automatic rules). Empty for now; phase 3 fills it from the config.
         public static readonly Dictionary<string, ImpactMode> Overrides = new Dictionary<string, ImpactMode>();
@@ -102,12 +107,31 @@ namespace WaterImpact
             return prevPos + (nowPos - prevPos) * t;
         }
 
-        // Splash size grows with the cube root of kinetic energy: rocket ~2 m, artillery ~9 m, large railgun 25 m (cap).
-        public static float SplashRadius(float massKg, float speed)
+        // Effect size: cube root of the kinetic energy in MJ. Rocket ~1, assault cannon 3.3, artillery 4.6,
+        // small railgun 6.3, large railgun 15.9.
+        public static float EffectSize(float massKg, float speed)
         {
             double energyMJ = 0.5d * Math.Max(massKg, 1f) * speed * speed / 1e6d;
-            float radius = (float)(2d * Math.Pow(Math.Max(energyMJ, 0d), 1d / 3d));
+            return (float)Math.Pow(Math.Max(energyMJ, 0.001d), 1d / 3d);
+        }
+
+        // Surface splash radius: rocket 3 m, assault cannon 10 m, artillery 14 m, small railgun 19 m, large railgun 40 m.
+        public static float SplashRadius(float massKg, float speed)
+        {
+            float radius = 3f * EffectSize(massKg, speed);
             return MathHelper.Clamp(radius, ImpactSettings.MinSplashRadius, ImpactSettings.MaxSplashRadius);
+        }
+
+        // Water column scale: assault cannon 0.8, artillery 1.2, small railgun 1.6, large railgun 3 (cap).
+        public static float ColumnScale(float size)
+        {
+            return MathHelper.Clamp(size / 4f, ImpactSettings.MinColumnScale, ImpactSettings.MaxColumnScale);
+        }
+
+        // Number of spray droplets thrown up by the Water Mod's physics splash.
+        public static int SprayCount(float size)
+        {
+            return MathHelper.Clamp((int)(size * 3f), 4, 24);
         }
 
         // Ticks until the next water check for a round `heightAbove` metres over the surface: half the time it needs
